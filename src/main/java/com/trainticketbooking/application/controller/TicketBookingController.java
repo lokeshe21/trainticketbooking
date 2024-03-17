@@ -104,9 +104,11 @@ public class TicketBookingController {
     @ApiResponse(responseCode = "200", description = ApiResponseMessages.USER_DETAIL_UPDATED_SUCCESSFUL)
     @ApiResponse(responseCode = "500", description = ApiResponseMessages.FAILED_TO_UPDATE_USER_DETAIL)
     public ResponseEntity<CustomApiResponse<TicketBookingDto>> updateUserSeatAllocationDetails(
-            @PathVariable Integer ticketId, @RequestParam Integer seatNumber) {
+            @PathVariable Integer ticketId,
+            @RequestParam(required = false) Integer seatNumber, @RequestParam(required = false) String discount) {
         try {
-            CustomApiResponse<TicketBookingDto> response = ticketBookingService.updateUserSeatAllocation(ticketId, seatNumber);
+            CustomApiResponse<TicketBookingDto> response = ticketBookingService.updateUserSeatAllocation(ticketId,
+                    seatNumber, discount);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

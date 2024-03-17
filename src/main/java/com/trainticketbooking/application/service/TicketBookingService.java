@@ -9,6 +9,7 @@ import com.trainticketbooking.application.util.TicketBookingMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -22,6 +23,10 @@ public class TicketBookingService {
 
     private final TicketBookingMapper ticketBookingMapper;
     private final Map<Integer, TicketBooking> ticketBookingMap = new ConcurrentHashMap<>();
+
+    private final Map<String, BigDecimal> discountMap = new HashMap<>();
+
+
     private final Set<Integer> sectionASeats = new HashSet<>();
     private final Set<Integer> sectionBSeats = new HashSet<>();
     private static final int MAX_SEATS_PER_SECTION = 20;
@@ -37,6 +42,14 @@ public class TicketBookingService {
      * @return CustomApiResponse with information about the ticket booking operation.
      */
     public CustomApiResponse<TicketBookingDto> purchaseTicket(TicketBookingDto ticketBooking) {
+        this.getDiscountMap();
+        BigDecimal updatedPrice = ticketBooking.pricePaid();
+        if (Optional.ofNullable(ticketBooking.discount()).isPresent()){
+            BigDecimal discountAmount = discountMap.get(ticketBooking.discount());
+            if(Optional.ofNullable(discountAmount).isPresent() ){
+                updatedPrice = updatedPrice.subtract(discountAmount);
+            }
+        }
         Integer ticketId = generateTicketId();
         String section = allocateSection();
         Integer seatNumber = allocateSeat(section);
@@ -45,7 +58,7 @@ public class TicketBookingService {
                 ticketBooking.to(),
                 ticketBooking.userName(),
                 ticketBooking.userEmail(),
-                ticketBooking.pricePaid(),
+                updatedPrice,
                 section,
                 seatNumber);
         ticketBookingMap.put(ticketId, newTicket);
@@ -142,29 +155,83 @@ public class TicketBookingService {
      *
      * @param ticketId   The ID of the ticket to be updated.
      * @param seatNumber The new seat number to be assigned.
+     * @param discount
      * @return CustomApiResponse with information about the seat update operation.
      */
-    public CustomApiResponse<TicketBookingDto> updateUserSeatAllocation(Integer ticketId, Integer seatNumber) {
-        TicketBooking ticketBooking = ticketBookingMap.get(ticketId);
-        if (ticketBooking != null) {
-            // Check if the seat number is within the valid range
-            if (seatNumber < 1 || seatNumber > (MAX_SEATS_PER_SECTION*2)) {
-                return new CustomApiResponse<>(HttpStatus.BAD_REQUEST.value(),
-                        "Invalid seat number. Seat number must be between 1 and " + MAX_SEATS_PER_SECTION*2, null);
-            }
+    public CustomApiResponse<TicketBookingDto> updateUserSeatAllocation(Integer ticketId, Integer seatNumber, String discount) {
 
-            // Check if the seat is already occupied
-            if (!isSeatOccupied(seatNumber)) {
-                ticketBooking.setSeatNumber(seatNumber);
-                return new CustomApiResponse<>(HttpStatus.OK.value(),
-                        ApiResponseMessages.USER_DETAIL_UPDATED_SUCCESSFUL, convertToDto(ticketBooking));
-            } else {
-                return new CustomApiResponse<>(HttpStatus.BAD_REQUEST.value(),
-                        ApiResponseMessages.SEAT_ALREADY_OCCUPIED, null);
+
+        TicketBooking ticketBooking = ticketBookingMap.get(ticketId);
+        this.getDiscountMap();
+        String responseForDiscount = null;
+        String responseForSeatUpdate = null;
+        CustomApiResponse<TicketBookingDto> customApiResponse = new CustomApiResponse<>();
+
+        if (Optional.ofNullable(discount).isPresent()){
+            responseForDiscount = this.applyDiscount(ticketBooking, discount);
+            customApiResponse.setStatus(HttpStatus.OK.value());
+        }else {
+            responseForDiscount = "No discount is opted for ticket and ";
+        }
+        if(Optional.ofNullable(seatNumber).isPresent()) {
+            responseForSeatUpdate = this.updateSeatNumber(ticketBooking, seatNumber, customApiResponse);
+
+        }else {
+            responseForSeatUpdate = "no seat update preferd.";
+        }
+        customApiResponse.setMessage(responseForDiscount+responseForSeatUpdate);
+        return customApiResponse;
+    }
+
+    private String updateSeatNumber(TicketBooking ticketBooking,
+                                  Integer seatNumber,
+                                  CustomApiResponse<TicketBookingDto> customApiResponse) {
+        String responseForSeatUpdate = null;
+        if (ticketBooking != null) {
+
+            // Check if the seat number is within the valid range
+            if (seatNumber < 1 || seatNumber > (MAX_SEATS_PER_SECTION * 2)) {
+                responseForSeatUpdate = "Invalid seat number. Seat number must be between " +
+                        "1 and " + MAX_SEATS_PER_SECTION * 2+".";
+                customApiResponse.setStatus(HttpStatus.BAD_REQUEST.value());
+            }else {
+
+                // Check if the seat is already occupied
+                if (!isSeatOccupied(seatNumber)) {
+                    if (ticketBooking.getSection().equalsIgnoreCase("a")) {
+                        sectionASeats.remove(ticketBooking.getSeatNumber());
+                        sectionASeats.add(seatNumber);
+                    } else {
+                        sectionBSeats.remove(ticketBooking.getSeatNumber());
+                        sectionBSeats.add(seatNumber);
+                    }
+                    ticketBooking.setSeatNumber(seatNumber);
+                    responseForSeatUpdate = ApiResponseMessages.USER_DETAIL_UPDATED_SUCCESSFUL;
+                    customApiResponse.setStatus(HttpStatus.OK.value());
+                    customApiResponse.setData(convertToDto(ticketBooking));
+                } else {
+                    responseForSeatUpdate = ApiResponseMessages.SEAT_ALREADY_OCCUPIED;
+                    customApiResponse.setStatus(HttpStatus.BAD_REQUEST.value());
+                }
             }
         } else {
-            return new CustomApiResponse<>(HttpStatus.OK.value(),
-                    ApiResponseMessages.FAILED_TO_UPDATE_USER_DETAIL, null);
+            responseForSeatUpdate = ApiResponseMessages.FAILED_TO_UPDATE_USER_DETAIL;
+            customApiResponse.setStatus(HttpStatus.OK.value());
+        }
+
+        return responseForSeatUpdate;
+    }
+
+    private String applyDiscount(TicketBooking ticketBooking, String discount) {
+        BigDecimal updatedPrice = ticketBooking.getPricePaid();
+        BigDecimal discountAmount = discountMap.get(discount);
+        if(Optional.ofNullable(discountAmount).isPresent() && updatedPrice.compareTo(discountAmount)>0 ){
+            updatedPrice = updatedPrice.subtract(discountAmount);
+            ticketBooking.setPricePaid(updatedPrice);
+            ticketBookingMap.replace(ticketBooking.getTicketId(),ticketBooking);
+            return "Discount applied to pirce and ";
+        } else {
+            return "Discount amount is higher than booking price and ";
         }
     }
 
@@ -232,5 +299,12 @@ public class TicketBookingService {
 
     private TicketBookingDto convertToDto(TicketBooking ticketBooking) {
         return ticketBookingMapper.toDto(ticketBooking);
+    }
+
+    private void getDiscountMap(){
+        discountMap.put("DISCOUNT1", BigDecimal.valueOf(1));
+        discountMap.put("DISCOUNT2", BigDecimal.valueOf(2));
+        discountMap.put("DISCOUNT3", BigDecimal.valueOf(10));
+
     }
 }

@@ -12,5 +12,6 @@ public record TicketBookingDto(Integer ticketId,
                                String userEmail,
                                BigDecimal pricePaid,
                                String section,
-                               Integer seatNumber) {
+                               Integer seatNumber,
+                               String discount) {
 }
